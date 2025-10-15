@@ -1,1 +1,17 @@
+tunnel: c9c30439-ba01-431d-b46d-7b3827011057
+credentials-file: C:\Users\runneradmin\.cloudflared\c9c30439-ba01-431d-b46d-7b3827011057.json
 
+ingress:
+  # 1. RTMP Ingest (OBS pushes stream here)
+  - hostname: rtmp.deeniakhbar53.in 
+    service: tcp://localhost:1935
+    originRequest:
+      noTLSVerify: true
+
+  # 2. HLS Delivery (Viewers access stream here)
+  - hostname: stream.deeniakhbar53.in 
+    service: http://localhost:80
+    originRequest:
+      noTLSVerify: true
+
+  - service: http_status:404
