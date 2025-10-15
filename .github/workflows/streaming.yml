@@ -1,1 +1,89 @@
+name: Adaptive Live Stream (3 Hours Max)
 
+on:
+  workflow_dispatch:
+    inputs:
+      tunnel_name:
+        description: 'Test'
+        required: true
+      stream_key:
+        description: 'OBS Stream Key (e.g., mystream)'
+        required: true
+        default: 'test'
+
+jobs:
+  live_stream:
+    runs-on: windows-latest
+    timeout-minutes: 180 # Set to 3 hours maximum
+
+    steps:
+      - name: Checkout repository files
+        uses: actions/checkout@v4
+
+      # --- Setup Phase ---
+
+      - name: Create Nginx and Tunnel Credential Directories
+        shell: powershell
+        run: |
+          New-Item -Path C:\nginx\conf -ItemType Directory -Force
+          New-Item -Path C:\nginx\html\hls -ItemType Directory -Force
+          New-Item -Path C:\Users\runneradmin\.cloudflared -ItemType Directory -Force
+
+      - name: Download and Install Nginx-RTMP
+        shell: powershell
+        run: |
+          $url = "http://nginx.org/download/nginx-1.26.0.zip"
+          Invoke-WebRequest -Uri $url -OutFile C:\nginx.zip
+          Expand-Archive -Path C:\nginx.zip -DestinationPath C:\nginx -Force
+          Rename-Item -Path C:\nginx\nginx-1.26.0 -NewName C:\nginx\bin
+
+      - name: Install FFmpeg (Required for Transcoding)
+        uses: sergey-shpak/setup-ffmpeg@v1 
+        with:
+          version: '6.0'
+
+      - name: Install Cloudflare Tunnel Client
+        shell: powershell
+        run: |
+          Invoke-WebRequest -Uri https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile C:\cloudflared.exe
+          $env:Path += ";C:\"
+
+      - name: Inject Cloudflare Tunnel Credentials (From Secret)
+        shell: powershell
+        run: |
+          # The runner creates the file with the content of your GitHub Secret
+          '${{ secrets.CLOUDFLARE_CREDENTIALS }}' | Out-File -FilePath C:\Users\runneradmin\.cloudflared\c9c30439-ba01-431d-b46d-7b3827011057.json -Encoding UTF8
+        env:
+          CLOUDFLARE_CREDENTIALS: ${{ secrets.CLOUDFLARE_CREDENTIALS }}
+
+      - name: Copy Configuration Files
+        shell: powershell
+        run: |
+          Copy-Item -Path "nginx.conf" -Destination "C:\nginx\bin\conf\nginx.conf"
+          Copy-Item -Path "config.yml" -Destination "C:\config.yml"
+
+      # --- Execution Phase ---
+
+      - name: Start Services and Maintain Session (3 hours max)
+        shell: powershell
+        run: |
+          Write-Host "Starting Nginx-RTMP server..."
+          Start-Process -FilePath "C:\nginx\bin\nginx.exe" -NoNewWindow
+          Start-Sleep -Seconds 10 # Wait for Nginx to fully start
+
+          Write-Host "Starting Cloudflare Tunnel for RTMP and HLS access..."
+          
+          # Start cloudflared in the background (&)
+          C:\cloudflared.exe tunnel --config C:\config.yml run ${{ github.event.inputs.tunnel_name }} & 
+          
+          Write-Host "Streaming server is active. Session will run for 3 hours."
+          
+          # Keep the runner active for 3 hours (10800 seconds)
+          Start-Sleep -Seconds 10800 
+
+      - name: Stop Nginx Server
+        if: always()
+        shell: powershell
+        run: |
+          Write-Host "Stopping Nginx server..."
+          C:\nginx\bin\nginx.exe -s quit
